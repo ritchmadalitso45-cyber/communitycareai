@@ -28,13 +28,17 @@ import com.communitycare.ai.ui.theme.*
 
 @Composable
 fun SignInScreen(
-    onSignIn: () -> Unit,
-    onSignUp: () -> Unit
+    onSignIn: (String, String, Boolean) -> Unit,
+    onSignUp: () -> Unit, busy: Boolean = false, error: String? = null, message: String? = null,
+    onReset: (String) -> Unit, onBrowserSignIn: () -> Unit
 ) {
     var email           by remember { mutableStateOf("") }
     var password        by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var rememberMe      by remember { mutableStateOf(false) }
+    var resetOpen by remember { mutableStateOf(false) }
+    var resetIdentity by remember { mutableStateOf("") }
+    var formError by remember { mutableStateOf<String?>(null) }
 
     Box(
         modifier = Modifier
@@ -47,7 +51,7 @@ fun SignInScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(220.dp)
                 .clip(RoundedCornerShape(bottomStart = 999.dp, bottomEnd = 999.dp))
                 .background(Brush.verticalGradient(listOf(TealPrimary, TealDark)))
         )
@@ -55,11 +59,12 @@ fun SignInScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .safeDrawingPadding().imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(44.dp))
+            Spacer(Modifier.height(20.dp))
 
             // ── Header ────────────────────────────────────────────
             Box(
@@ -90,12 +95,14 @@ fun SignInScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
 
+                    (formError ?: error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    message?.let { Text(it, color = TealDark) }
                     AuthTextField(
                         value = email,
                         onValueChange = { email = it },
-                        label = "Email Address",
+                        label = "Email or username",
                         leadingIcon = Icons.Filled.Email,
-                        keyboardType = KeyboardType.Email
+                        keyboardType = KeyboardType.Text
                     )
 
                     OutlinedTextField(
@@ -134,22 +141,26 @@ fun SignInScreen(
                             )
                             Text("Remember me", fontSize = 13.sp, color = TextSecondary)
                         }
-                        TextButton(onClick = {}) {
+                        TextButton(onClick = { resetIdentity = email; resetOpen = true }, enabled = !busy) {
                             Text("Forgot Password?", fontSize = 13.sp, color = TealPrimary, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
                     Button(
-                        onClick = onSignIn,
+                        onClick = {
+                            if (email.isBlank() || password.isBlank()) formError = "Enter your email or username and password."
+                            else { formError = null; onSignIn(email, password, rememberMe); password = "" }
+                        }, enabled = !busy,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp),
-                        shape = RoundedCornerShape(26.dp),
+                        shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = TealPrimary)
                     ) {
-                        Text("Sign In", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = White)
+                        Text(if (busy) "Signing in…" else "Sign In", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = White)
                     }
 
+                    TextButton(onClick = onBrowserSignIn, enabled = !busy) { Text("Browser sign-in & account setup") }
                     // ── Divider ───────────────────────────────────
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFE0E0E0))
@@ -157,6 +168,7 @@ fun SignInScreen(
                         HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFE0E0E0))
                     }
 
+                    Text("Google & Microsoft · Setup pending", fontSize = 11.sp, color = TextSecondary)
                     // ── Social logins ─────────────────────────────
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -184,12 +196,19 @@ fun SignInScreen(
             Spacer(Modifier.height(32.dp))
         }
     }
+    if (resetOpen) AlertDialog(onDismissRequest = { resetOpen = false }, title = { Text("Reset password") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(resetIdentity, { resetIdentity = it }, label = { Text("Email or username") }, singleLine = true)
+            Text("Email recovery requires the programme's email service. If unavailable, contact your administrator.", fontSize = 12.sp)
+        }
+    }, confirmButton = { TextButton(enabled = resetIdentity.isNotBlank() && !busy, onClick = { onReset(resetIdentity); resetOpen = false }) { Text("Request reset") } },
+        dismissButton = { TextButton(onClick = { resetOpen = false }) { Text("Cancel") } })
 }
 
 @Composable
 private fun SocialButton(modifier: Modifier, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
     OutlinedButton(
-        onClick = {},
+        onClick = {}, enabled = false,
         modifier = modifier.height(46.dp),
         shape = RoundedCornerShape(12.dp),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)

@@ -2,6 +2,8 @@ package com.communitycare.ai.ui.screens
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -89,11 +91,13 @@ fun GetStartedScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
-            Spacer(Modifier.height(72.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── App logo / icon cluster ────────────────────────────────
             Box(
@@ -103,14 +107,14 @@ fun GetStartedScreen(
                 // Outer glow ring
                 Box(
                     modifier = Modifier
-                        .size(160.dp)
+                        .size(136.dp)
                         .clip(CircleShape)
                         .background(White.copy(alpha = 0.20f))
                 )
                 // Mid ring
                 Box(
                     modifier = Modifier
-                        .size(120.dp)
+                        .size(108.dp)
                         .clip(CircleShape)
                         .background(White.copy(alpha = 0.30f))
                 )
@@ -164,7 +168,7 @@ fun GetStartedScreen(
                 letterSpacing = 0.3.sp
             )
 
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── Feature highlight card ────────────────────────────────
             Surface(
@@ -175,29 +179,29 @@ fun GetStartedScreen(
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     FeatureRow(
                         icon = Icons.Filled.MonitorHeart,
-                        title = "Offline AI Diagnostics",
-                        subtitle = "Works without internet — edge AI on device"
+                        title = "Offline assessment reports",
+                        subtitle = "Save confirmed triage outcomes without internet"
                     )
                     HorizontalDivider(color = White.copy(alpha = 0.30f))
                     FeatureRow(
                         icon = Icons.Filled.Favorite,
-                        title = "Guided Clinical Triage",
-                        subtitle = "WHO-standard IMCI protocols step by step"
+                        title = "Secure staff sign-in",
+                        subtitle = "Access your assigned CommunityCare facility"
                     )
                     HorizontalDivider(color = White.copy(alpha = 0.30f))
                     FeatureRow(
                         icon = Icons.Filled.LocalHospital,
-                        title = "Smart Referral Slips",
-                        subtitle = "Instant printable referrals for critical cases"
+                        title = "Confirmed delivery",
+                        subtitle = "Track your reports through to DHIS2"
                     )
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(28.dp))
 
             // ── CTA button ────────────────────────────────────────────
             Button(

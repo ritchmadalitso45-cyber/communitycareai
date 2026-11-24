@@ -12,8 +12,13 @@ android {
         applicationId = "com.communitycare.ai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 9
+        versionName = "1.5-preview"
+        manifestPlaceholders["appAuthRedirectScheme"] = "communitycare"
+        buildConfigField("String", "API_BASE_URL", "\"https://care-api.95.111.247.118.sslip.io/\"")
+        buildConfigField("String", "OIDC_ISSUER", "\"https://care-login.95.111.247.118.sslip.io/realms/communitycare\"")
+        buildConfigField("String", "OIDC_CLIENT_ID", "\"communitycare-android\"")
+        buildConfigField("String", "OIDC_REDIRECT_URI", "\"communitycare://oauth/callback\"")
     }
 
     buildTypes {
@@ -22,18 +27,28 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
 dependencies {
+    implementation("androidx.core:core-splashscreen:1.0.1")
+    implementation("net.openid:appauth:0.11.1")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

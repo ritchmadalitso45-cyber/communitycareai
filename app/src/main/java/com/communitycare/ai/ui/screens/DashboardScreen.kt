@@ -25,6 +25,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.communitycare.ai.ui.theme.*
+import com.communitycare.ai.data.*
+import com.communitycare.ai.SyncStatus
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 // ── Data models ───────────────────────────────────────────────────────────
 
@@ -43,115 +47,160 @@ data class HealthTip(val title: String, val body: String, val icon: ImageVector)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(profile: Profile, records: List<LocalEncounter>, sync: SyncStatus,
+                    error: String?, onRecord: (Triage) -> Boolean, onSync: () -> Unit,
+                    onSignIn: () -> Unit, onLogout: () -> Unit, quality: QualityUiState,
+                    onRefreshQuality: () -> Unit, clinic: ClinicStore, app: com.communitycare.ai.AppContainer) {
     var selectedTab by remember { mutableStateOf(0) }
+    var clinicMode by remember { mutableStateOf("PATIENT") }
     var searchQuery by remember { mutableStateOf("") }
-
+    var newPatient by remember { mutableStateOf(false) }
+    var showStatus by remember { mutableStateOf(false) }
+    var roleNotice by remember { mutableStateOf(false) }
+    var workMode by remember { mutableStateOf(false) }
+    var accountBusy by remember { mutableStateOf(false) }
+    var accountError by remember { mutableStateOf<String?>(null) }
+    val roleScope = rememberCoroutineScope()
+    val local by clinic.snapshot.collectAsState()
+    val patients = local.patients.filter { it.belongsTo(profile) }
+    val entries = local.entries.filter { it.belongsTo(profile) }
+    val today = java.time.LocalDate.now()
+    val pending = records.count { it.state == DeliveryState.PENDING || it.state == DeliveryState.QUEUED }
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val recentPatients = patients.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        .sortedByDescending { it.createdAt }.take(5).map { p ->
+            val last = entries.filter { it.patientId == p.id && it.kind == "NOTE" }.maxByOrNull { it.at }
+            RecentPatient(p.name, "${p.ageAtRegistration} yrs at registration", last?.text ?: "No clinical note recorded",
+                "unassessed", originalTime(p.createdAt), originalInitials(p.name))
+        }
+    val statCards = listOf(
+        StatItem(patients.count { java.time.Instant.parse(it.createdAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate() == today }.toString(), "Registered today", Icons.Filled.Group, TealPrimary),
+        StatItem(records.count { it.triage != Triage.ROUTINE && it.state == DeliveryState.FORWARDED }.toString(), "Referrals reported", Icons.Filled.Send, AccentAmber),
+        StatItem(entries.count { it.kind == "NOTE" }.toString(), "Clinical notes", Icons.Filled.CheckCircle, AccentGreen),
+        StatItem(records.count { it.triage == Triage.URGENT_REFERRAL }.toString(), "Urgent reports", Icons.Filled.Emergency, AccentRed)
+    )
     val quickActions = listOf(
-        QuickAction("New Patient",    Icons.Filled.PersonAdd,     TealPrimary),
-        QuickAction("Appointments",   Icons.Filled.CalendarMonth, Color(0xFF5390D9)),
-        QuickAction("Treatments",     Icons.Filled.MedicalServices, AccentGreen),
-        QuickAction("Emergency",      Icons.Filled.Emergency,     AccentRed)
+        QuickAction("New Patient", Icons.Filled.PersonAdd, TealPrimary),
+        QuickAction("Appointments", Icons.Filled.CalendarMonth, Color(0xFF5390D9)),
+        QuickAction("Treatments", Icons.Filled.MedicalServices, AccentGreen),
+        QuickAction("Emergency", Icons.Filled.Emergency, AccentRed)
     )
-
-    val recentPatients = listOf(
-        RecentPatient("Chisomo Banda",   "7 yrs",  "Malaria (RDT+)",     "critical",  "08:30 AM", "CB"),
-        RecentPatient("Thandiwe Phiri",  "32 yrs", "ANC Visit — 28 wks", "stable",    "09:15 AM", "TP"),
-        RecentPatient("Limbani Mwale",   "4 yrs",  "Severe Malnutrition","critical",  "10:00 AM", "LM"),
-        RecentPatient("Grace Nkhoma",    "55 yrs", "Hypertension F/U",   "moderate",  "10:45 AM", "GN"),
-        RecentPatient("Moses Chirwa",    "2 yrs",  "Diarrhoea + Fever",  "moderate",  "11:20 AM", "MC")
-    )
-
     val healthTips = listOf(
-        HealthTip("IMCI Protocol", "Follow integrated management steps for under-5 cases.", Icons.Filled.ChildCare),
-        HealthTip("Danger Signs",  "Convulsions, unable to drink, lethargy → refer immediately.", Icons.Filled.Warning),
-        HealthTip("Malaria RDT",   "Positive RDT in febrile child: treat with ACT within 1 hour.", Icons.Filled.BugReport)
+        HealthTip("Delivery check", "$pending reports await DHIS2 delivery confirmation.", Icons.Filled.Sync),
+        HealthTip("Human confirmed care", "Record the outcome you have confirmed using your approved clinical guidance.", Icons.Filled.VerifiedUser),
+        HealthTip("Reporting quality AI", "Review live facility reporting patterns in the Assess tab. Scores are experimental.", Icons.Filled.Analytics)
     )
-
-    Scaffold(
-        containerColor = Color(0xFFF0FAFA),
-        bottomBar = { BottomNavBar(selectedTab) { selectedTab = it } }
-    ) { paddingValues ->
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
-        ) {
-
-            // ── Top hero banner ───────────────────────────────────
-            HeroBanner(searchQuery) { searchQuery = it }
-
-            Spacer(Modifier.height(16.dp))
-
-            // ── Quick actions ─────────────────────────────────────
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SectionHeader("Quick Actions", showAll = false)
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    quickActions.forEach { action ->
-                        QuickActionCard(action)
+    Scaffold(containerColor = Color(0xFFF0FAFA), bottomBar = {
+        BottomNavBar(selectedTab) { selectedTab = it; if (it == 1) clinicMode = "PATIENT"; if (it == 2) workMode = true }
+    }) { paddingValues ->
+        Box(Modifier.fillMaxSize().padding(paddingValues)) {
+            when (selectedTab) {
+                1 -> ClinicRecordsScreen(profile, clinic, clinicMode, { if(profile.canRecordCare()) newPatient = true else roleNotice = true }, { selectedTab = 2 })
+                2 -> Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilterChip(selected=workMode,onClick={workMode=true},label={Text("My role tasks")})
+                        FilterChip(selected=!workMode,onClick={workMode=false},label={Text("Reports & AI")})
+                    }
+                    Box(Modifier.weight(1f)) {
+                        if(workMode) RoleWorkspace(profile,app)
+                        else ReportingScreen(profile, records, sync, error, onRecord, onSync, onSignIn, onLogout, quality, onRefreshQuality)
                     }
                 }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // ── Stats row ─────────────────────────────────────────
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(statCards) { stat ->
-                    StatCard(stat)
+                3 -> MessagesScreen(profile,app)
+                4 -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).safeDrawingPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("My profile", style = MaterialTheme.typography.headlineMedium, color = TealDark)
+                    Text(profile.name, style = MaterialTheme.typography.titleLarge)
+                    Text("Username: ${profile.username}")
+                    Text("Role: ${profile.assignedRole()}", color = TealDark, fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick={workMode=true;selectedTab=2}) { Text("Open my role tasks") }
+                    OutlinedButton(enabled=!accountBusy,onClick={
+                        accountBusy=true;accountError=null
+                        roleScope.launch {
+                            try { app.auth.refreshProfile(app.api) }
+                            catch(c: CancellationException){throw c}
+                            catch(_: Exception){accountError="Could not refresh your account. Try again."}
+                            finally{accountBusy=false}
+                        }
+                    }) { Text(if(accountBusy) "Refreshing…" else "Refresh role and account") }
+                    accountError?.let { Text(it,color=MaterialTheme.colorScheme.error) }
+                    Text("Assigned facility: ${profile.orgUnit}")
+                    Text("Your facility is assigned by an administrator. Patient records stay encrypted on this phone; aggregate reports sync to DHIS2.")
+                    OutlinedButton(onClick = { uri.openUri("https://care-login.95.111.247.118.sslip.io/realms/communitycare/account/") }) { Text("Manage my account") }
+                    Text("New users can register in the app. Email recovery is awaiting Gmail setup.", color = TextSecondary)
+                    OutlinedButton(onClick = { showStatus = true }) { Text("Reporting and delivery status") }
+                    Button(onClick = onLogout) { Text("Sign out") }
+                }
+                else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    HeroBanner(searchQuery, { searchQuery = it }, profile.name,
+                        { workMode = false; selectedTab = 2 }, { showStatus = true })
+                    Spacer(Modifier.height(16.dp))
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        SectionHeader("Quick Actions", false)
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            quickActions.forEachIndexed { index, action -> QuickActionCard(action) {
+                                when(index) {
+                                    0 -> if(profile.canRecordCare()) newPatient = true else roleNotice = true
+                                    1 -> { clinicMode = "APPOINTMENT"; selectedTab = 1 }
+                                    2 -> { clinicMode = "NOTE"; selectedTab = 1 }
+                                    else -> { workMode = false; selectedTab = 2 }
+                                }
+                            } }
+                        }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(statCards) { StatCard(it) }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Recent Patients", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextPrimary)
+                            TextButton(onClick = { clinicMode = "PATIENT"; selectedTab = 1 }) { Text("View All ›") }
+                        }
+                        if (recentPatients.isEmpty()) Surface(shape = RoundedCornerShape(16.dp), color = White) {
+                            Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                                Text(if (searchQuery.isBlank()) "Your patient register is empty." else "No patients match your search.")
+                                Text("Saved records will appear here. No sample patients are inserted.", color = TextSecondary, fontSize = 12.sp)
+                                TextButton(onClick = { if(profile.canRecordCare()) newPatient = true else roleNotice = true }) { Text("Add a patient") }
+                            }
+                        }
+                        recentPatients.forEach { patient ->
+                            PatientCard(patient) { clinicMode = "PATIENT"; selectedTab = 1 }
+                            Spacer(Modifier.height(10.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Column(Modifier.padding(horizontal = 16.dp)) { SectionHeader("Care and reporting reminders", false) }
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(healthTips) { HealthTipCard(it) }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                    SyncStatusBanner(pending, sync, onSync)
+                    Spacer(Modifier.height(16.dp))
                 }
             }
-
-            Spacer(Modifier.height(20.dp))
-
-            // ── Upcoming / Recent patients ─────────────────────────
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SectionHeader("Recent Patients", showAll = true)
-                Spacer(Modifier.height(10.dp))
-                recentPatients.forEach { patient ->
-                    PatientCard(patient)
-                    Spacer(Modifier.height(10.dp))
-                }
-            }
-
-            // ── Health tips carousel ───────────────────────────────
-            Spacer(Modifier.height(4.dp))
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SectionHeader("Clinical Reminders", showAll = true)
-                Spacer(Modifier.height(10.dp))
-            }
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(healthTips) { tip ->
-                    HealthTipCard(tip)
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            // ── Sync status banner ─────────────────────────────────
-            SyncStatusBanner()
-
-            Spacer(Modifier.height(16.dp))
         }
     }
+    if (roleNotice) AlertDialog(onDismissRequest={roleNotice=false},title={Text("Supervisor workspace")},
+        text={Text("Your role coordinates staff and reviews reporting. Open My role tasks for assignments and oversight.")},
+        confirmButton={TextButton(onClick={roleNotice=false;workMode=true;selectedTab=2}){Text("Open my tasks")}},
+        dismissButton={TextButton(onClick={roleNotice=false}){Text("Close")}})
+    if (newPatient) NewPatientDialog(profile, clinic) { newPatient = false }
+    if (showStatus) AlertDialog(onDismissRequest = { showStatus = false }, title = { Text("Reporting status") },
+        text = { Text(sync.message ?: "$pending reports await delivery confirmation. Open Assess to review receipts and live reporting-quality analysis.") },
+        confirmButton = { TextButton(onClick = { showStatus = false; selectedTab = 2 }) { Text("Open reporting") } },
+        dismissButton = { TextButton(onClick = { showStatus = false }) { Text("Close") } })
 }
+
+private fun originalInitials(name: String) = name.trim().split(Regex("\\s+")).take(2).mapNotNull { it.firstOrNull() }.joinToString("").uppercase()
+private fun originalTime(value: String) = java.time.format.DateTimeFormatter.ofPattern("dd MMM, HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(value))
+
 
 // ── Hero Banner ───────────────────────────────────────────────────────────
 
 @Composable
-private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
+private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit, name: String, onConsultation: () -> Unit, onStatus: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -184,12 +233,12 @@ private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text("Good Morning 👋", fontSize = 13.sp, color = White.copy(alpha = 0.80f))
-                    Text("HSA Thandi M.", fontWeight = FontWeight.Black, fontSize = 20.sp, color = White)
+                Column(Modifier.weight(1f).padding(end=8.dp)) {
+                    Text("Welcome back", fontSize = 13.sp, color = White.copy(alpha = 0.80f))
+                    Text(name, fontWeight = FontWeight.Black, fontSize = 20.sp, color = White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IconButton(onClick = {}) {
+                    IconButton(onClick = onStatus) {
                         Icon(Icons.Filled.Notifications, null, tint = White, modifier = Modifier.size(24.dp))
                     }
                     Box(
@@ -199,7 +248,7 @@ private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
                             .background(TealLight),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("TM", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TealDark)
+                        Text(originalInitials(name), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TealDark)
                     }
                 }
             }
@@ -218,7 +267,7 @@ private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
             Spacer(Modifier.height(6.dp))
 
             Text(
-                "AI-powered triage · offline-ready · WHO protocols",
+                "Offline reporting · DHIS2 · reporting-quality AI",
                 fontSize = 12.sp,
                 color = White.copy(alpha = 0.75f)
             )
@@ -226,7 +275,7 @@ private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = {},
+                onClick = onConsultation,
                 shape = RoundedCornerShape(22.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = White),
                 elevation = ButtonDefaults.buttonElevation(4.dp),
@@ -249,7 +298,7 @@ private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Search patients, symptoms…", fontSize = 13.sp, color = Color(0xFF9DB5BC)) },
+            placeholder = { Text("Search saved patients…", fontSize = 13.sp, color = Color(0xFF9DB5BC)) },
             leadingIcon = { Icon(Icons.Filled.Search, null, tint = TealPrimary) },
             trailingIcon = { Icon(Icons.Filled.Tune, null, tint = TealPrimary) },
             singleLine = true,
@@ -268,12 +317,12 @@ private fun HeroBanner(searchQuery: String, onSearchChange: (String) -> Unit) {
 // ── Quick Action Card ─────────────────────────────────────────────────────
 
 @Composable
-private fun QuickActionCard(action: QuickAction) {
+private fun QuickActionCard(action: QuickAction, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .width(76.dp)
-            .clickable {}
+            .clickable(onClick = onClick)
     ) {
         Box(
             modifier = Modifier
@@ -293,13 +342,6 @@ private fun QuickActionCard(action: QuickAction) {
 // ── Stats ─────────────────────────────────────────────────────────────────
 
 data class StatItem(val value: String, val label: String, val icon: ImageVector, val color: Color)
-
-val statCards = listOf(
-    StatItem("12",  "Today's Patients", Icons.Filled.Group,       TealPrimary),
-    StatItem("3",   "Referrals Sent",   Icons.Filled.Send,        AccentAmber),
-    StatItem("8",   "Treated",          Icons.Filled.CheckCircle, AccentGreen),
-    StatItem("1",   "Critical",         Icons.Filled.Emergency,   AccentRed)
-)
 
 @Composable
 private fun StatCard(stat: StatItem) {
@@ -334,14 +376,14 @@ private fun StatCard(stat: StatItem) {
 // ── Patient Card ──────────────────────────────────────────────────────────
 
 @Composable
-private fun PatientCard(patient: RecentPatient) {
+private fun PatientCard(patient: RecentPatient, onClick: () -> Unit) {
     val severityColor = when (patient.severity) {
         "critical" -> AccentRed
         "moderate" -> AccentAmber
-        else       -> AccentGreen
+        else       -> TextSecondary
     }
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         color = CardBg,
         shadowElevation = 3.dp
@@ -424,7 +466,7 @@ private fun HealthTipCard(tip: HealthTip) {
 // ── Sync Status Banner ────────────────────────────────────────────────────
 
 @Composable
-private fun SyncStatusBanner() {
+private fun SyncStatusBanner(pending: Int, sync: SyncStatus, onSync: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -443,15 +485,15 @@ private fun SyncStatusBanner() {
                     .background(TealPrimary.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.WifiOff, null, tint = TealPrimary, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Sync, null, tint = TealPrimary, modifier = Modifier.size(18.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Offline Mode Active", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = TealDark)
-                Text("12 records pending sync  •  Last sync: 2 hrs ago",
+                Text(if (sync.busy) "Checking DHIS2 delivery" else "Reporting status", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = TealDark)
+                Text(sync.message ?: "$pending reports await confirmation. Last checked: ${sync.checkedAt?.let { originalTime(it) } ?: "not yet"}",
                     fontSize = 11.sp, color = TextSecondary)
             }
-            TextButton(onClick = {}) {
+            TextButton(onClick = onSync, enabled = !sync.busy) {
                 Text("Sync", color = TealPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
         }
@@ -483,7 +525,7 @@ private fun BottomNavBar(selected: Int, onSelect: (Int) -> Unit) {
     val items = listOf(
         Triple("Home",       Icons.Filled.Home,            Icons.Outlined.Home),
         Triple("Patients",   Icons.Filled.Group,           Icons.Outlined.Group),
-        Triple("Diagnose",   Icons.Filled.MonitorHeart,    Icons.Outlined.MonitorHeart),
+        Triple("Assess",   Icons.Filled.MonitorHeart,    Icons.Outlined.MonitorHeart),
         Triple("Messages",   Icons.Filled.Message,         Icons.Outlined.Message),
         Triple("Profile",    Icons.Filled.Person,          Icons.Outlined.Person)
     )

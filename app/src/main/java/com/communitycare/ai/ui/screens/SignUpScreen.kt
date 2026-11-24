@@ -24,12 +24,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.communitycare.ai.ui.theme.*
+import com.communitycare.ai.data.registrationError
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 fun SignUpScreen(
-    onSignUp: () -> Unit,
-    onSignIn: () -> Unit
+    onSignUp: (String, String, String, String, String) -> Unit,
+    onSignIn: () -> Unit, busy: Boolean = false, error: String? = null, message: String? = null
 ) {
     var fullName       by remember { mutableStateOf("") }
     var email          by remember { mutableStateOf("") }
@@ -40,6 +41,7 @@ fun SignUpScreen(
     var confirmVisible  by remember { mutableStateOf(false) }
     var role           by remember { mutableStateOf("HSA") }
     var expanded       by remember { mutableStateOf(false) }
+    var formError by remember { mutableStateOf<String?>(null) }
     val roles = listOf("HSA", "Nurse", "Clinical Officer", "Supervisor")
 
     Box(
@@ -53,7 +55,7 @@ fun SignUpScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(220.dp)
                 .clip(RoundedCornerShape(bottomStart = 999.dp, bottomEnd = 999.dp))
                 .background(
                     Brush.verticalGradient(listOf(TealPrimary, TealDark))
@@ -63,11 +65,12 @@ fun SignUpScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .safeDrawingPadding().imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(44.dp))
+            Spacer(Modifier.height(20.dp))
 
             // ── Header inside the arc ──────────────────────────────
             Box(
@@ -86,7 +89,7 @@ fun SignUpScreen(
             }
             Spacer(Modifier.height(10.dp))
             Text("Create Account", fontWeight = FontWeight.Black, fontSize = 24.sp, color = White)
-            Text("Join CommunityCare AI today", fontSize = 13.sp, color = White.copy(alpha = 0.85f))
+
 
             Spacer(Modifier.height(32.dp))
 
@@ -102,6 +105,8 @@ fun SignUpScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
 
+                    (formError ?: error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    message?.let { Text(it, color = TealDark) }
                     AuthTextField(
                         value = fullName,
                         onValueChange = { fullName = it },
@@ -209,17 +214,21 @@ fun SignUpScreen(
                         colors = authTextFieldColors()
                     )
 
+                    Text("Test-pilot accounts can use their selected staff role immediately. Operational roles require approval. No staff role grants identity-server administrator access.", fontSize = 12.sp, color = TextSecondary)
                     Spacer(Modifier.height(4.dp))
 
                     Button(
-                        onClick = onSignUp,
+                        onClick = {
+                            formError = registrationError(fullName, email, phone, password, confirmPass)
+                            if (formError == null) { onSignUp(fullName, email, phone, role, password); password = ""; confirmPass = "" }
+                        }, enabled = !busy,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp),
-                        shape = RoundedCornerShape(26.dp),
+                        shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = TealPrimary)
                     ) {
-                        Text("Create Account", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = White)
+                        Text(if (busy) "Creating account…" else "Create Account", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = White)
                     }
                 }
             }

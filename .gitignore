@@ -55,3 +55,6 @@ local.properties
 # Temporary files
 *.log
 *.tmp
+
+# Local integration builds and verification reports
+artifacts/
